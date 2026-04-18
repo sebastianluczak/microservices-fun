@@ -1,8 +1,23 @@
 import { NestFactory } from '@nestjs/core';
+import { Transport, MicroserviceOptions } from '@nestjs/microservices';
 import { AppModule } from './app.module.js';
+import otelSDK from './tracing.js';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
-  await app.listen(process.env.PORT ?? 3000);
+  otelSDK.start();
+  const app = await NestFactory.createMicroservice<MicroserviceOptions>(
+    AppModule,
+    {
+      transport: Transport.GRPC,
+      options: {
+        package: 'statistics',
+        protoPath: 'src/statistics.proto',
+      },
+    },
+  );
+  await app.listen();
 }
-await bootstrap();
+bootstrap().catch((err) => {
+  console.error('Error starting the microservice:', err);
+  process.exit(1);
+});

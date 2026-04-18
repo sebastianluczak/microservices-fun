@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import './App.css'
+import { io } from 'socket.io-client'
 
 type UploadStatus = {
   filenameInTemporaryDirectory: string;
@@ -11,6 +12,21 @@ type UploadStatus = {
 function App() {
   const [fileToUpload, setFileToUpload] = useState<File | null>(null);
   const [uploadStatus, setUploadStatus] = useState<UploadStatus>('');
+
+  const socket = io('http://localhost:3422');
+
+  socket.on('connect', () => {
+    console.log('Socket.IO connection established');
+    socket.emit('events', 'Hello from the frontend!');
+  });
+
+  socket.on('disconnect', () => {
+    console.log('Socket.IO connection closed');
+  });
+
+  socket.on('events', (data: string) => {
+    console.log('Received message from server:', data);
+  });
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     if (event.target.files && event.target.files.length > 0) {
@@ -38,7 +54,6 @@ function App() {
         const result = await response.text();
         const uploadStatusReal = JSON.parse(result) as { filenameInTemporaryDirectory: string; fileInStorage: string; publicDownloadUrl: string; eTag: string };
         setUploadStatus(uploadStatusReal);
-        setFileToUpload(null); // Clear the selected file
       } else {
         setUploadStatus('Failed to upload file.');
       }

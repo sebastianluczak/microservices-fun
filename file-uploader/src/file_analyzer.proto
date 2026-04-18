@@ -1,0 +1,15 @@
+syntax = "proto3";
+
+package file_analyzer;
+
+service FileAnalyzer {
+  rpc CheckForErrors (JsonFileOnGcsRequest) returns (ValidationResult) {}
+}
+
+message JsonFileOnGcsRequest {
+  string pathToGcs = 1;
+}
+
+message ValidationResult {
+  string result = 1;
+}
