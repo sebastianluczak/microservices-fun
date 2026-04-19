@@ -15,9 +15,12 @@ export class AppController {
 
   @MessagePattern({ cmd: 'storeUser' })
   async storeUser(jsonString: string) {
-    const receivedPayload = JSON.parse(jsonString) as { userId: string };
+    const receivedPayload = JSON.parse(jsonString) as {
+      userId: string;
+      corelationId: string;
+    };
     this.logger.log(
-      `Received payload: ${JSON.stringify(receivedPayload, null, 2)}`,
+      `[${receivedPayload.corelationId}] (@${receivedPayload.userId}) Received payload: ${JSON.stringify(receivedPayload, null, 2)}`,
     );
 
     // Check if user is in redis already.
@@ -39,7 +42,9 @@ export class AppController {
       possibleUserData = JSON.stringify(newData);
       await this.redis.set(receivedPayload.userId, possibleUserData);
     }
-    this.logger.log(`Found ${possibleUserData} for ${receivedPayload.userId}`);
+    this.logger.log(
+      `[${receivedPayload.corelationId}] (@${receivedPayload.userId})Found ${possibleUserData} for ${receivedPayload.userId}`,
+    );
 
     return possibleUserData;
   }

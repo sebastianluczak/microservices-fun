@@ -1,8 +1,14 @@
 = How to complicate JSON validation
 
-See `kiss.php`. That's all. Now see other files.
+== JSONKnight
+
+image::banner.png[]
+
+See `kiss.php`. That's all I needed to do. Now see other files.
 
 Microservices approach for most valuable thing on the planet - JSON validation.
+
+You can now scale your JSON validation in cloud, on premise, on lambdas, on your toaster.
 
 I had fun over the weekend. It's not finished yet, never will be.
 

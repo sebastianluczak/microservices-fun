@@ -40,7 +40,7 @@ export class AppController {
     const userHistory = await firstValueFrom(
       this.userTracker.send<string>(
         { cmd: 'storeUser' },
-        JSON.stringify({ userId }),
+        JSON.stringify({ userId, corelationId }),
       ),
     );
     const parsedUserData = JSON.parse(userHistory) as {
@@ -51,8 +51,9 @@ export class AppController {
       `[${corelationId}] (@${userId}) User uploaded their ${parsedUserData.visitCount} file to us, nice!`,
     );
 
-    this.logger.log('Received file upload request');
-    this.logger.log(`File size: ${file.buffer.length} bytes`);
+    this.logger.log(
+      `[${corelationId}] (@${userId}) File size: ${file.buffer.length} bytes`,
+    );
     const jsonPayload = JSON.stringify({
       filename: file.originalname,
       size: file.buffer.length,
