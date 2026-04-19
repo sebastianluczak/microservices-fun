@@ -8,6 +8,8 @@ service FileAnalyzer {
 
 message JsonFileOnGcsRequest {
   string pathToGcs = 1;
+  string corelationId = 2;
+  string userId = 3;
 }
 
 message ValidationResult {

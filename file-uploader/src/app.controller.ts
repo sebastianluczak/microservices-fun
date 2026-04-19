@@ -32,7 +32,11 @@ type StatsService = {
 };
 
 type FileAnalyzerService = {
-  CheckForErrors: (data: { pathToGcs: string }) => Observable<void>;
+  CheckForErrors: (data: {
+    pathToGcs: string;
+    corelationId: string;
+    userId: string;
+  }) => Observable<void>;
 };
 
 @Controller()
@@ -85,38 +89,45 @@ export class AppController implements OnModuleInit {
       ephemeralId: string;
     };
     this.logger.log(
-      `[${json.corelationId}] (@${json.ephemeralId}) - upload started`,
+      `[${json.corelationId}] (@${json.ephemeralId}) Upload request started`,
     );
 
     const data = Buffer.from(json.buffer, 'utf-8');
-    this.logger.log('Received file upload request');
-    this.logger.log(`File size: ${data.length} bytes`);
+    this.logger.log(
+      `[${json.corelationId}] (@${json.ephemeralId}) File size: ${data.length} bytes`,
+    );
     // Store this in `uploads` directory with a unique name
     const uploadsDir = path.join(os.tmpdir(), 'uploads');
-    this.logger.log(`Ensuring uploads directory exists at ${uploadsDir}`);
     if (!fs.existsSync(uploadsDir)) {
       fs.mkdirSync(uploadsDir);
     }
 
     const filename = `${randomUUID()}-${json.filename}`;
     const filePath = path.join(uploadsDir, filename);
-    this.logger.log(`Saving file to ${filePath}`);
+    this.logger.log(
+      `[${json.corelationId}] (@${json.ephemeralId}) Saving file to ${filePath}`,
+    );
     fs.writeFileSync(filePath, data);
     // now upload to MinIO
     this.logger.log(
-      `Uploading file to MinIO bucket 'uploads' with name ${filename}`,
+      `[${json.corelationId}] (@${json.ephemeralId}) Uploading file to MinIO bucket 'uploads' with name ${filename}`,
     );
     const uploadPromise = this.minioClient
       .putObject('uploads', filename, fs.createReadStream(filePath))
       .then((response) => {
-        this.logger.log(`File uploaded to MinIO as ${response.etag}`);
+        this.logger.log(
+          `[${json.corelationId}] (@${json.ephemeralId}) File uploaded to MinIO as ${response.etag}`,
+        );
         // Optionally, delete the local file after upload
         fs.unlinkSync(filePath);
 
         return response;
       })
       .catch((err) => {
-        this.logger.error('Error uploading file to MinIO', err);
+        this.logger.error(
+          `[${json.corelationId}] (@${json.ephemeralId}) Error uploading file to MinIO`,
+          err,
+        );
         throw err;
       });
 
@@ -127,18 +138,31 @@ export class AppController implements OnModuleInit {
       filename,
       12 * 60 * 60,
     ); // URL valid for 12 hours
-    this.logger.log(`File uploaded and saved as ${filePath}`);
+    this.logger.log(
+      `[${json.corelationId}] (@${json.ephemeralId}) File uploaded and saved as ${filePath}`,
+    );
 
     // Send file to analyzer microservice
-    this.logger.log(`Sending file to analyzer microservice at ${filePath}`);
+    this.logger.log(
+      `[${json.corelationId}] (@${json.ephemeralId}) Sending file to analyzer microservice at ${filePath}`,
+    );
     this.fileAnalyzerService
-      .CheckForErrors({ pathToGcs: publicDownloadUrl })
+      .CheckForErrors({
+        pathToGcs: publicDownloadUrl,
+        corelationId: json.corelationId,
+        userId: json.ephemeralId,
+      })
       .subscribe({
         next: () => {
-          this.logger.log(`File analysis sent. See logs on the other side`);
+          this.logger.log(
+            `[${json.corelationId}] (@${json.ephemeralId}) File analysis sent. See logs on the other side`,
+          );
         },
         error: (err) => {
-          this.logger.error('Error analyzing file', err);
+          this.logger.error(
+            `[${json.corelationId}] (@${json.ephemeralId}) Error analyzing file`,
+            err,
+          );
         },
       });
 
@@ -146,17 +170,23 @@ export class AppController implements OnModuleInit {
     dataForStats.milliseconds = endTime - startTime;
     this.statsService.SaveNew(dataForStats).subscribe({
       next: (res) => {
-        this.logger.log(`Stats saved successfully at ${res.collectedAt}`);
+        this.logger.log(
+          `[${json.corelationId}] (@${json.ephemeralId}) Stats saved successfully at ${res.collectedAt}`,
+        );
       },
       error: (err) => {
-        this.logger.error('Error saving stats', err);
+        this.logger.error(
+          `[${json.corelationId}] (@${json.ephemeralId}) Error saving stats`,
+          err,
+        );
       },
     });
+
     return JSON.stringify({
       filenameInTemporaryDirectory: filePath,
       fileInStorage: filename,
       publicDownloadUrl: publicDownloadUrl,
       eTag: result.etag,
-    } as DownloadFileDto); // Return a success code or any relevant information
+    } as DownloadFileDto);
   }
 }

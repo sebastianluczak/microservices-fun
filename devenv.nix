@@ -28,6 +28,13 @@
     enable = true;
   };
 
+  services.rabbitmq = {
+    enable = true;
+    managementPlugin = {
+      enable = true;
+    };
+  };
+
   process.manager.implementation = "process-compose";
   processes = {
     a-file-uploader.exec = "cd file-uploader && npm install && npm run start:dev";

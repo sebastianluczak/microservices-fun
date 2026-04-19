@@ -1,6 +1,8 @@
 import { Module } from '@nestjs/common';
 import { AppController } from './app.controller.js';
 import { ClientsModule, Transport } from '@nestjs/microservices';
+import { UserHistoryService } from './user-history.service.js';
+import { FileUploaderService } from './file-uploader.service.js';
 
 @Module({
   imports: [
@@ -22,6 +24,6 @@ import { ClientsModule, Transport } from '@nestjs/microservices';
     ]),
   ],
   controllers: [AppController],
-  providers: [],
+  providers: [UserHistoryService, FileUploaderService],
 })
 export class AppModule {}

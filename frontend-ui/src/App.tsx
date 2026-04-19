@@ -24,6 +24,10 @@ function App() {
     console.log('Connected to WebSocket server');
   });
 
+  wsConnection.on('validation', (data) => {
+    console.log(`Received validation payload!`, data);
+  })
+
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     if (event.target.files && event.target.files.length > 0) {
       setFileToUpload(event.target.files[0]);
@@ -76,7 +80,10 @@ function App() {
         )}</p>
       </div>
       <div>
-        <h1>Upload a file to the server</h1>
+        <h1>JSONValidate</h1><h2>SaaS Microservice</h2>
+        <p>
+          Send any JSON file, see if it's valid or not!
+        </p>
         <input type="file" onChange={handleFileChange} accept='application/json'/>
         <button onClick={handleFileUpload}>Upload</button>
       </div>

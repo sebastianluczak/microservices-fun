@@ -28,12 +28,21 @@ export class AppGateway implements OnGatewayConnection, OnGatewayDisconnect {
     console.log('Client connected:', client.id);
   }
 
+  broadcastValidation(validation: unknown) {
+    if (!this.server) {
+      this.logger.warn(
+        'WebSocket server not ready yet - skipping validation broadcast',
+      );
+      return;
+    }
+
+    this.server.emit('validation', validation);
+  }
+
   @SubscribeMessage('hello')
   handleHello(
     @MessageBody() data: { message: string; userId: string; knownAs: string },
   ) {
-    this.logger.log('Received hello:', data);
-
     this.server.emit('events', {
       message: `Hello, ${data.knownAs}!`,
       userId: data.userId,

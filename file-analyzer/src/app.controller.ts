@@ -1,14 +1,24 @@
-import { Controller, Logger } from '@nestjs/common';
-import { GrpcMethod } from '@nestjs/microservices';
+import { Controller, Inject, Logger } from '@nestjs/common';
+import { ClientProxy, GrpcMethod } from '@nestjs/microservices';
+import { firstValueFrom } from 'rxjs';
 
 @Controller()
 export class AppController {
   private readonly logger = new Logger(AppController.name);
 
+  constructor(
+    @Inject('VALIDATION_NOTIFICATIONS')
+    private readonly rabbitNotificationsClient: ClientProxy,
+  ) {}
+
   @GrpcMethod('FileAnalyzer', 'CheckForErrors')
-  async checkForErrors(data: { pathToGcs: string }): Promise<string> {
+  async checkForErrors(data: {
+    pathToGcs: string;
+    corelationId: string;
+    userId: string;
+  }): Promise<string> {
     this.logger.log(
-      `Received gRPC request to analyze file at path: ${data.pathToGcs}`,
+      `[${data.corelationId} (@${data.userId}) Received gRPC request to analyze file at path: ${data.pathToGcs}`,
     );
 
     const fetchedFile = await fetch(data.pathToGcs);
@@ -16,10 +26,43 @@ export class AppController {
 
     try {
       JSON.parse(fileContent);
-      this.logger.log('File content is valid JSON');
+      this.logger.log(
+        `[${data.corelationId} (@${data.userId}) File content is valid JSON`,
+      );
+      const validation = {
+        message: `Validation result`,
+        userId: data.userId,
+        corelationId: data.corelationId,
+        result: 'Your file is VALID! Good job!',
+        boolResult: true,
+      };
+      const result = this.rabbitNotificationsClient.send(
+        'validation_notifications_queue',
+        JSON.stringify(validation),
+      );
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+      const trueResult = await firstValueFrom(result);
+      console.log(trueResult);
       return 'File is clean';
     } catch (error) {
-      this.logger.error('File content is not valid JSON', error);
+      this.logger.error(
+        `[${data.corelationId} (@${data.userId}) File content is not valid JSON. ${error}`,
+      );
+      const validation = {
+        message: `Hello, anonymous!`,
+        userId: data.userId,
+        corelationId: data.corelationId,
+        result: 'Your file is NOT VALID, you messed up as hell!',
+        boolResult: false,
+      };
+      const result = this.rabbitNotificationsClient.send(
+        'validation_notifications_queue',
+        JSON.stringify(validation),
+      );
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+      const trueResult = await firstValueFrom(result);
+      console.log(trueResult);
+
       return 'File has errors';
     }
   }

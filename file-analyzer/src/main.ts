@@ -24,15 +24,29 @@ async function bootstrapWebSocketServer() {
     origin: '*', // Allow all origins (you can specify specific origins if needed)
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
   });
+  app.connectMicroservice<MicroserviceOptions>({
+    transport: Transport.RMQ,
+    options: {
+      urls: ['amqp://localhost:5672'],
+      queue: 'validation_notifications_queue',
+      queueOptions: {
+        durable: false,
+      },
+    },
+  });
+
+  await app.startAllMicroservices();
   await app.listen(process.env.PORT ?? 3422);
 }
 
 bootstrapWebSocketServer()
   .then(() => {
-    console.log('WebSocket server is running...');
+    console.log(
+      'WebSocket server is running and RabbitMQ microservice is connected...',
+    );
   })
   .catch((err) => {
-    console.error('Error starting the WebSocket server:', err);
+    console.error('Error starting the WebSocket/RabbitMQ server:', err);
     process.exit(1);
   });
 bootstrap()
