@@ -1,0 +1,127 @@
+{
+  "id": null,
+  "title": "Internal Statistics Dashboard",
+  "tags": ["internal", "statistics", "prometheus"],
+  "timezone": "browser",
+  "panels": [
+    {
+      "id": 1,
+      "title": "Custom Counter by Type",
+      "type": "stat",
+      "targets": [
+        {
+          "expr": "custom_counter_total",
+          "legendFormat": "{{type}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": 2,
+      "title": "Process Time Histogram",
+      "type": "heatmap",
+      "targets": [
+        {
+          "expr": "app_process_time_bucket",
+          "legendFormat": "{{le}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      }
+    },
+    {
+      "id": 3,
+      "title": "Average Process Time by Type",
+      "type": "bargauge",
+      "targets": [
+        {
+          "expr": "rate(app_process_time_sum[5m]) / rate(app_process_time_count[5m])",
+          "legendFormat": "{{type}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1000
+              }
+            ],
+            "unit": "ms"
+          },
+          "overrides": []
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 8
+      }
+    }
+  ],
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "templating": {
+    "list": []
+  },
+  "annotations": {
+    "list": []
+  },
+  "refresh": "5s",
+  "schemaVersion": 27,
+  "version": 0,
+  "links": []
+}
