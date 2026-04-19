@@ -1,1 +1,9 @@
+= How to complicate JSON validation
+
+See `kiss.php`. That's all. Now see other files.
+
+Microservices approach for most valuable thing on the planet - JSON validation.
+
+I had fun over the weekend. It's not finished yet, never will be.
+
 image::arch.png[]
