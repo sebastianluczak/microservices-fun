@@ -22,10 +22,10 @@ export class AppGateway implements OnGatewayConnection, OnGatewayDisconnect {
   server: Server;
 
   handleDisconnect(client: { id: string }) {
-    console.log('Client disconnected:', client.id);
+    this.logger.debug(`[WS] Client disconnected: ${client.id}`);
   }
   handleConnection(client: { id: string }) {
-    console.log('Client connected:', client.id);
+    this.logger.debug(`[WS] Client connected: ${client.id}`);
   }
 
   broadcastValidation(validation: unknown) {

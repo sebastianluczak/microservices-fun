@@ -40,9 +40,17 @@ export class AppController {
         'validation_notifications_queue',
         JSON.stringify(validation),
       );
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-      const trueResult = await firstValueFrom(result);
-      console.log(trueResult);
+      firstValueFrom(result)
+        .then(() => {
+          this.logger.log(
+            `[${data.corelationId} (@${data.userId}) Checked and is valid`,
+          );
+        })
+        .catch(() => {
+          this.logger.error(
+            `[${data.corelationId} (@${data.userId}) Failed to inform users via WS`,
+          );
+        });
       return 'File is clean';
     } catch (error) {
       this.logger.error(
@@ -59,9 +67,18 @@ export class AppController {
         'validation_notifications_queue',
         JSON.stringify(validation),
       );
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-      const trueResult = await firstValueFrom(result);
-      console.log(trueResult);
+
+      firstValueFrom(result)
+        .then(() => {
+          this.logger.log(
+            `[${data.corelationId} (@${data.userId}) Resolved result from rabbitmq successfuly.`,
+          );
+        })
+        .catch(() => {
+          this.logger.error(
+            `[${data.corelationId} (@${data.userId}) Error from rabbitMq.`,
+          );
+        });
 
       return 'File has errors';
     }

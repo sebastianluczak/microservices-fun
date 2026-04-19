@@ -16,6 +16,21 @@ image::preview.png[]
 
 image::arch.png[]
 
+== Local development and testing
+
+You need link:https://devenv.sh[devenv.sh environment] based on NixOS. NixOS is awesome, you should use it. I won't bother with providing Docker for this abomination.
+
+Just `devenv up` everything, nothing more. But, I messed up the connectivity layer, some services may refuse to start. Just restart them (CTRL+R) in `process-compose` until they're alive. If something goes wrong - `rm -rf .devenv`.
+
+Notable are:
+
+. link:http://localhost:5173[Main UI]
+. link:http://localhost:3000/dashboards[Grafana dashboards]
+. link:http://localhost:15672/[RabbitMQ queue] (likes to crash as a service in devenv)
+. link:http://localhost:9001/browser/uploads[Minio admin] - `minioadmin`/`minioadmin` - S3 like file structure
+
+NOTE: There's no database.
+
 == Parting words
 
 This thing is a wild idea dressed up like a microservice circus. It's not a polished enterprise product, but it is a working concept: client sees nice UI, goes through API Gateway, JSON comes in, gets judged and processed in microservice mesh, and a message flashes across sockets asynchronously. Perfection.

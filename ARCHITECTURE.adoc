@@ -611,7 +611,7 @@ box Infrastructure_Layer as infra_layer #lightcyan
   participant "Message Broker\n(RabbitMQ/Kafka)" as broker
   participant "Object Storage\n(MinIO/S3)" as storage
   participant "Cache\n(Redis)" as cache
-  participant "User DB\n(PostgreSQL)" as user_db
+  participant "User DB\n(Redis)" as user_db
 end box
 
 box Observability_Layer as obs_layer #lightgray
@@ -691,7 +691,7 @@ a|
 
 |Phase 4: Data Persistence
 a|
-- Add PostgreSQL for User Service
+- Add Redis for User Service
 - Implement session schema and query API
 - Enable MinIO versioning and lifecycle policies
 |Medium
@@ -805,7 +805,7 @@ CMD ["node", "dist/main.js"]
 === Kubernetes
 
 For production, consider Kubernetes with:
-- StatefulSets for PostgreSQL and Redis
+- StatefulSets for Redis
 - Deployments for stateless services
 - ConfigMaps for environment variables
 - Secrets for credentials

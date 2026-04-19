@@ -1,0 +1,9 @@
+apiVersion: 1
+
+providers:
+  - name: 'internal-statistics 3'
+    orgId: 1
+    folder: 'Internal Statistics 3'
+    type: file
+    options:
+      path: ./grafana/conf/provisioning/dashboards/internal-statistics
