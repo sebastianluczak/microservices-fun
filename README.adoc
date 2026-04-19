@@ -12,4 +12,6 @@ You can now scale your JSON validation in cloud, on premise, on lambdas, on your
 
 I had fun over the weekend. It's not finished yet, never will be.
 
+image::preview.png[]
+
 image::arch.png[]
