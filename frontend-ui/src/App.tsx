@@ -100,10 +100,6 @@ function App() {
     }
   };
 
-  const resultText = typeof uploadStatus === 'string'
-    ? uploadStatus
-    : `Uploaded: ${uploadStatus.filenameInTemporaryDirectory}`;
-
   return (
     <div className="app-shell">
       <div className="hero-bg"></div>
@@ -143,16 +139,14 @@ function App() {
 
             <button className="btn-primary" onClick={handleFileUpload}>Upload file</button>
 
-            <div className="result-card">
               {typeof uploadStatus !== 'string' && uploadStatus.publicDownloadUrl ? (
-                <>
-                  <p className="result-label">Download back</p>
-                  <button className="btn-link" onClick={() => window.open(uploadStatus.publicDownloadUrl, '_blank')}>
-                    Download {uploadStatus.fileInStorage}
+                <div className="result-card">
+                  <p className="result-label">Now with new feature!</p>
+                  <button className="btn-primary" onClick={() => window.open(uploadStatus.publicDownloadUrl, '_blank')}>
+                    🐱 Download same file ❤️
                   </button>
-                </>
+                </div>
               ) : null}
-            </div>
           </div>
         </aside>
       </header>

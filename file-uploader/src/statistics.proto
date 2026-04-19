@@ -3,18 +3,7 @@ syntax = "proto3";
 package statistics;
 
 service StatisticsService {
-  rpc FindAll (FindAllRequest) returns (StatsObject) {}
   rpc SaveNew (SaveRequest) returns (SaveResponse) {}
-}
-
-message FindAllRequest {
-  string type = 1;
-}
-
-message StatsObject {
-  int32 id = 1;
-  string name = 2;
-  int32 milliseconds = 3;
 }
 
 message SaveRequest {
@@ -22,6 +11,8 @@ message SaveRequest {
   int32 milliseconds = 2;
   string type = 3;
   string name = 4;
+  string corelationId = 5;
+  string userId = 6;
 }
 
 message SaveResponse {

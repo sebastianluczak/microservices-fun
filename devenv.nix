@@ -43,6 +43,6 @@
     a-file-analyzer.exec = "cd file-analyzer && npm install && npm run start:dev";
     a-user-tracker.exec = "cd user-tracker && npm install && npm run start:dev";
     frontend-ui.exec = "cd frontend-ui && npm install && npm run dev";
-    grafana.exec = "./start-grafana.sh";
+    grafana.exec = "env INTERNAL_GRAFANA_DEVENV_DIR=${pkgs.grafana.outPath} ./start-grafana.sh";
   };
 }

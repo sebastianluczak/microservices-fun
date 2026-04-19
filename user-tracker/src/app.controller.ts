@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-unsafe-call */
 import { Controller, Logger } from '@nestjs/common';
 import { MessagePattern } from '@nestjs/microservices';
 import { Redis } from 'ioredis';
@@ -43,7 +42,7 @@ export class AppController {
       await this.redis.set(receivedPayload.userId, possibleUserData);
     }
     this.logger.log(
-      `[${receivedPayload.corelationId}] (@${receivedPayload.userId})Found ${possibleUserData} for ${receivedPayload.userId}`,
+      `[${receivedPayload.corelationId}] (@${receivedPayload.userId}) Found ${possibleUserData} for ${receivedPayload.userId}`,
     );
 
     return possibleUserData;

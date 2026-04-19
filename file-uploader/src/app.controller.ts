@@ -15,20 +15,17 @@ type DownloadFileDto = {
   eTag: string;
 };
 
-type StatsResponse = {
-  id: number;
+type StatsRequest = {
   name: string;
   milliseconds: number;
+  type: string;
+  dateAt: string;
+  corelationId: string;
+  userId: string;
 };
 
 type StatsService = {
-  FindAll: () => Observable<StatsResponse>;
-  SaveNew: (data: {
-    name: string;
-    milliseconds: number;
-    type: string;
-    dateAt: string;
-  }) => Observable<{ collectedAt: string }>;
+  SaveNew: (data: StatsRequest) => Observable<{ collectedAt: string }>;
 };
 
 type FileAnalyzerService = {
@@ -68,19 +65,6 @@ export class AppController implements OnModuleInit {
 
   @microservices.MessagePattern({ cmd: 'upload' })
   async upload(jsonString: string): Promise<string> {
-    const dataForStats: {
-      name: string;
-      milliseconds: number;
-      type: string;
-      dateAt: string;
-    } = {
-      name: 'file-upload',
-      milliseconds: 0,
-      type: 'upload',
-      dateAt: new Date().toISOString(),
-    };
-    const startTime = Date.now();
-
     const json = JSON.parse(jsonString) as {
       filename: string;
       size: number;
@@ -88,6 +72,16 @@ export class AppController implements OnModuleInit {
       corelationId: string;
       ephemeralId: string;
     };
+    const dataForStats: StatsRequest = {
+      name: 'file-upload',
+      milliseconds: 0,
+      type: 'upload',
+      dateAt: new Date().toISOString(),
+      corelationId: json.corelationId,
+      userId: json.ephemeralId,
+    };
+    const startTime = Date.now();
+
     this.logger.log(
       `[${json.corelationId}] (@${json.ephemeralId}) Upload request started`,
     );
