@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import './App.css'
 import { useWsConnection } from './context/WsConnectionContext';
 import { useUser } from './context/UserContext';
@@ -13,20 +13,55 @@ type UploadStatus = {
 function App() {
   const [fileToUpload, setFileToUpload] = useState<File | null>(null);
   const [uploadStatus, setUploadStatus] = useState<UploadStatus>('');
+  const [lastValidation, setLastValidation] = useState<unknown>(null);
   const { socket: wsConnection } = useWsConnection();
   const { user, resetSession } = useUser();
 
-  wsConnection.on('events', (data) => {
-    console.log('Received from server:', data);
-  });
+  type ValidationPayload = {
+    message: string;
+    userId: string;
+    corelationId: string;
+    result: string;
+    boolResult: boolean;
+  };
 
-  wsConnection.on('connect', () => {
-    console.log('Connected to WebSocket server');
-  });
+  const validationPayload =
+    typeof lastValidation === 'object' && lastValidation !== null &&
+    'result' in lastValidation &&
+    'boolResult' in lastValidation
+      ? (lastValidation as ValidationPayload)
+      : null;
 
-  wsConnection.on('validation', (data) => {
-    console.log(`Received validation payload!`, data);
-  })
+  const validationStatus = validationPayload
+    ? validationPayload.boolResult
+      ? 'success'
+      : 'error'
+    : 'idle';
+
+  useEffect(() => {
+    const onEvents = (data: unknown) => {
+      console.log('Received from server:', data);
+    };
+
+    const onConnect = () => {
+      console.log('Connected to WebSocket server');
+    };
+
+    const onValidation = (data: unknown) => {
+      console.log('Received validation payload!', data);
+      setLastValidation(data);
+    };
+
+    wsConnection.on('events', onEvents);
+    wsConnection.on('connect', onConnect);
+    wsConnection.on('validation', onValidation);
+
+    return () => {
+      wsConnection.off('events', onEvents);
+      wsConnection.off('connect', onConnect);
+      wsConnection.off('validation', onValidation);
+    };
+  }, [wsConnection]);
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     if (event.target.files && event.target.files.length > 0) {
@@ -65,29 +100,103 @@ function App() {
     }
   };
 
+  const resultText = typeof uploadStatus === 'string'
+    ? uploadStatus
+    : `Uploaded: ${uploadStatus.filenameInTemporaryDirectory}`;
+
   return (
-    <section id="center">
-      <p>
-        {user 
-          ? `Hello, ${user.displayName}!`
-          : 'Loading user information...'
-        }
-        <button onClick={resetSession} style={{ marginLeft: '1rem' }}>Reset Session</button>
-      </p>
-      <div>
-        <p>{typeof uploadStatus === 'string' ? uploadStatus : (
-          <button onClick={() => window.open(uploadStatus.publicDownloadUrl, '_blank')}>Download {uploadStatus.fileInStorage}</button>
-        )}</p>
-      </div>
-      <div>
-        <h1>JSONValidate</h1><h2>SaaS Microservice</h2>
-        <p>
-          Send any JSON file, see if it's valid or not!
-        </p>
-        <input type="file" onChange={handleFileChange} accept='application/json'/>
-        <button onClick={handleFileUpload}>Upload</button>
-      </div>
-    </section>
+    <div className="app-shell">
+      <div className="hero-bg"></div>
+      <header className="hero-panel">
+        <div className="hero-copy">
+          <h1>JSON validation with instant websocket notifications.</h1>
+          <p>Upload any JSON file and receive live validation updates across all clients. Fast, flashy, and built for modern workflows.</p>
+          <div className="hero-kpis">
+            <div>
+              <strong>0.2s</strong>
+              <span>Average feedback</span>
+            </div>
+            <div>
+              <strong>100%</strong>
+              <span>Live event delivery</span>
+            </div>
+            <div>
+              <strong>Instant</strong>
+              <span>Websocket stream</span>
+            </div>
+          </div>
+        </div>
+
+        <aside className="hero-card">
+          <div className="card-top">
+            <div>
+              <p className="card-subtitle">Upload & monitor</p>
+              <h2>Drop your file and get feedback.</h2>
+            </div>
+          </div>
+
+          <div className="upload-form">
+            <label className="file-upload">
+              <span>{fileToUpload ? fileToUpload.name : 'Choose a JSON file'}</span>
+              <input type="file" onChange={handleFileChange} accept="application/json" />
+            </label>
+
+            <button className="btn-primary" onClick={handleFileUpload}>Upload file</button>
+
+            <div className="result-card">
+              {typeof uploadStatus !== 'string' && uploadStatus.publicDownloadUrl ? (
+                <>
+                  <p className="result-label">Download back</p>
+                  <button className="btn-link" onClick={() => window.open(uploadStatus.publicDownloadUrl, '_blank')}>
+                    Download {uploadStatus.fileInStorage}
+                  </button>
+                </>
+              ) : null}
+            </div>
+          </div>
+        </aside>
+      </header>
+
+      <section className="live-board">
+        <div className="board-head">
+          <div>
+            <h2>Live validation feed</h2>
+            <p>Websocket channel: <code>validation</code></p>
+          </div>
+          <span className="status-pill">Live</span>
+        </div>
+
+        <div className="board-grid">
+          <article className="info-card validation-card">
+            <div className="validation-card-header">
+              <div>
+                <h3>Validation result</h3>
+                <p className="validation-card-copy">Latest JSON validation event received over websocket.</p>
+              </div>
+              <span className="validation-pill">Realtime</span>
+            </div>
+            <div className={`validation-banner ${validationStatus}`}>
+              <span className="validation-dot" />
+              <div>
+                {validationPayload ? (
+                  <>
+                    <div className="validation-banner-title">{validationPayload.boolResult ? 'Validation passed' : 'Validation failed'}</div>
+                    <div className="validation-banner-text">{validationPayload.result}</div>
+                  </>
+                ) : (
+                  <div className="validation-banner-text">Waiting for the first validation event...</div>
+                )}
+              </div>
+            </div>
+          </article>
+          <article className="info-card accent-card">
+            <h3>Session</h3>
+            <p>{user ? `Hello, ${user.displayName}` : 'Loading user...'}</p>
+            <button className="btn-secondary" onClick={resetSession}>Reset Session</button>
+          </article>
+        </div>
+      </section>
+    </div>
   )
 }
 
