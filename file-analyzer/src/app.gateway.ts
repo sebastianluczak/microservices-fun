@@ -1,4 +1,4 @@
-/* eslint-disable @typescript-eslint/no-unsafe-call */
+import { Logger } from '@nestjs/common';
 import {
   SubscribeMessage,
   MessageBody,
@@ -16,6 +16,8 @@ import { Server } from 'socket.io';
   },
 })
 export class AppGateway implements OnGatewayConnection, OnGatewayDisconnect {
+  private readonly logger = new Logger(AppGateway.name);
+
   @WebSocketServer()
   server: Server;
 
@@ -26,10 +28,15 @@ export class AppGateway implements OnGatewayConnection, OnGatewayDisconnect {
     console.log('Client connected:', client.id);
   }
 
-  @SubscribeMessage('events')
-  handleEvent(@MessageBody() data: string) {
-    console.log('Received event:', data);
-    // Emit back to all connected clients
-    this.server.emit('events', `Server received: ${data}`);
+  @SubscribeMessage('hello')
+  handleHello(
+    @MessageBody() data: { message: string; userId: string; knownAs: string },
+  ) {
+    this.logger.log('Received hello:', data);
+
+    this.server.emit('events', {
+      message: `Hello, ${data.knownAs}!`,
+      userId: data.userId,
+    });
   }
 }

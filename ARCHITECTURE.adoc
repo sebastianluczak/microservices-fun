@@ -1,0 +1,875 @@
+= Microservices Architecture
+:toc: left
+:toclevels: 3
+:sectnums:
+:icons: font
+:source-highlighter: highlight.js
+
+== Overview
+
+This document describes the file processing microservices platform, capturing both the current development-phase implementation and the intended North Star architecture. The system ingests files through a web interface, stages them in temporary storage, validates their content, collects telemetry, and delivers results back to the frontend via WebSocket notifications.
+
+The platform is a NestJS-based microservices mesh using a mix of TCP, gRPC, and WebSocket protocols to coordinate asynchronous file processing, metrics collection, and user session tracking.
+
+=== Current Status
+
+The system is under active development. The current implementation demonstrates microservice communication patterns but requires architectural refinement to achieve production resilience, clearer service boundaries, and event-driven pipeline semantics.
+
+== Architecture Diagram
+
+[plantuml, microservices-north-star, svg]
+----
+@startuml
+!theme plain
+skinparam backgroundColor #ffffff
+skinparam defaultFontName Courier
+
+title Microservices Architecture: Current + North Star
+note right
+  **Current State (Solid lines):** Working integrations
+  **North Star Target (Dashed lines):** Recommended future state
+end note
+
+' Browser Client
+actor Browser as browser
+participant "Frontend UI\n(React)" as frontend <<UI>>
+note on link : port 5173\n(Vite dev server)
+
+' Session Management
+participant "User Session\nContext" as usersession <<UI>>
+note on link : LocalStorage\n+ random-name
+
+' API Gateway
+participant "Client API\nGateway\n(NestJS)" as apigw <<Gateway>>
+note on link : HTTP 8080\nport 8080\n(REST/FormData)
+
+' TCP Microservices
+participant "File Uploader\n(NestJS)" as uploader <<Service>>
+note on link : TCP 7001
+
+participant "User Tracker\n(NestJS)" as tracker <<Service>>
+note on link : TCP 7071
+
+' Event Broadcasting
+participant "File Analyzer\n(NestJS)" as analyzer <<Service>>
+note on link : gRPC 5051\nWebSocket 3422
+
+' Telemetry & Observability
+participant "Internal Statistics\n(OpenTelemetry)" as stats <<Service>>
+note on link : gRPC 8081
+
+' Storage & Observability Infra
+participant "MinIO S3" as minio <<Storage>>
+note on link : S3-compatible\nBucket: uploads\nport 9000
+
+participant "Prometheus" as prometheus <<Observability>>
+note on link : Scrapes 127.0.0.1:8081
+
+participant "Grafana" as grafana <<Observability>>
+note on link : Dashboard\nport 3000
+
+' Future / Unused
+participant "File Converter\n(NestJS)" as converter <<Service>>
+note on link : Future pipeline stage\n(currently unused)
+
+' Message Flow - Current State (Solid)
+browser -> frontend : User opens app
+frontend -> usersession : Session init\n(ephemeralId)
+frontend -> apigw : POST /upload\n[file, X-Ephemeral-Id]
+
+apigw -> tracker : send({cmd: 'storeUser'}, userId)\nTCP MessagePattern
+tracker --> apigw : userHistory
+apigw -> uploader : send({cmd: 'upload'}, payload)\nTCP MessagePattern
+
+uploader -> minio : putObject(uploads, filename)\nfs.createReadStream()
+minio --> uploader : etag, presignedUrl
+uploader -> analyzer : CheckForErrors(pathToGcs)\ngRPC unary call (async)
+uploader -> stats : SaveNew(metrics)\ngRPC unary call (async)
+
+stats --> uploader : { collectedAt }
+
+uploader --> apigw : DownloadFileDto
+apigw --> frontend : JSON response
+
+analyzer -> analyzer : Validate JSON\n(fetch + parse)
+note right of analyzer
+  **Current Gap:** No event
+  broadcasting back to
+  user/frontend
+end note
+
+frontend -> browser : Render upload result\n(no live updates)
+
+' North Star State (Dashed, lighter)
+note bottom of browser
+  **North Star Improvements:**
+  1. Event-driven async pipeline (no request/response blocking)
+  2. File Analyzer broadcasts events to frontend via WebSocket
+  3. User Tracker becomes persistent user service (DB)
+  4. File Converter integrated into analysis pipeline
+  5. Distributed tracing via OpenTelemetry
+  6. Dead-letter queues for failed operations
+  7. Service mesh observability (Prometheus + Grafana)
+end note
+
+@enduml
+----
+
+== Service Inventory
+
+=== Frontend UI
+[horizontal]
+**Tech Stack**:: React + Vite + TypeScript
+**Port**:: 5173 (dev) / varies (prod)
+**Transport**:: HTTP (browser) + WebSocket (socket.io)
+
+**Responsibilities**::
+- Browser UI for file upload
+- Session management via LocalStorage
+- WebSocket listener for real-time events
+- User identity (ephemeral UUID + display name)
+
+**Key Features**::
+- File picker and upload form
+- `UserContext`: manages ephemeral user identity
+- `WsConnectionContext`: maintains WebSocket connection to File Analyzer gateway
+- Receives events on `events` channel from server
+
+**North Star Gap**::
+- Should decouple session storage from identity assignment
+- WebSocket subscription could be more granular (e.g., per-upload-session)
+
+---
+
+=== Client API Gateway
+[horizontal]
+**Tech Stack**:: NestJS + TypeScript
+**Port**:: 8080 (HTTP)
+**Transport**:: HTTP REST + TCP clients
+
+**Responsibilities**::
+- Single entry point for frontend HTTP requests
+- Routes file uploads to File Uploader microservice
+- Coordinates user session lookup via User Tracker
+- Health checks and service discovery
+
+**Key Endpoints**::
+- `POST /upload`: Accepts multipart file + `X-Ephemeral-Id` header
+  - Calls User Tracker via TCP (MessagePattern `cmd: storeUser`)
+  - Calls File Uploader via TCP (MessagePattern `cmd: upload`)
+  - Returns download URL and metadata
+
+**Protocol Details**::
+- **File Uploader**: TCP at `localhost:7001`, NestJS `MessagePattern` RPC
+- **User Tracker**: TCP at `localhost:7071`, NestJS `MessagePattern` RPC
+
+**Current Implementation**::
+[source, typescript]
+----
+@Post('/upload')
+@UseInterceptors(FileInterceptor('file'))
+async uploadFile(
+  @UploadedFile() file: { buffer: Buffer; originalname: string },
+  @Headers('X-Ephemeral-Id') ephemeralId: string,
+): Promise<string> {
+  const userHistory = await firstValueFrom(
+    this.userTracker.send({ cmd: 'storeUser' }, JSON.stringify({ userId })),
+  );
+  const response = await firstValueFrom(
+    this.client.send({ cmd: 'upload' }, jsonPayload),
+  );
+  return response;
+}
+----
+
+**North Star Gap**::
+- Should implement circuit breaker + retry logic for TCP clients
+- Missing timeout guards and bulkhead isolation
+- No request correlation ID propagation
+
+---
+
+=== File Uploader
+[horizontal]
+**Tech Stack**:: NestJS + TypeScript + MinIO SDK
+**Port**:: 7001 (TCP)
+**Transport**:: TCP MessagePattern (inbound) + gRPC (outbound)
+
+**Responsibilities**::
+- Receives file upload requests from Client API
+- Stages file to temporary OS directory (`os.tmpdir() + /uploads`)
+- Uploads to MinIO S3-compatible storage
+- Triggers downstream analysis and metrics logging
+- Generates presigned download URL (12-hour TTL)
+
+**Key Flows**::
+1. Receives: `{ filename, size, buffer, correlationId, ephemeralId }`
+2. Writes to local temp file system
+3. Uploads to MinIO bucket `uploads`
+4. **Async (non-blocking)**:
+   - Calls File Analyzer gRPC: `CheckForErrors(pathToGcs: presignedUrl)`
+   - Calls Internal Statistics gRPC: `SaveNew(metrics)`
+5. Returns to Client API: presigned URL, eTag, filename
+
+**Protocol Details**::
+- **TCP (inbound)**: MessagePattern `cmd: upload`
+- **gRPC (outbound to Analyzer)**: `localhost:5051`, package `file_analyzer`, proto `src/file_analyzer.proto`
+- **gRPC (outbound to Stats)**: internal, package `statistics`, proto `src/statistics.proto`
+- **MinIO**: `127.0.0.1:9000`, credentials hardcoded (dev only)
+
+**Current Implementation**::
+[source, typescript]
+----
+@MessagePattern({ cmd: 'upload' })
+async upload(jsonString: string): Promise<string> {
+  const json = JSON.parse(jsonString) as { filename, size, buffer, correlationId, ephemeralId };
+  
+  // Write to temp
+  const filePath = path.join(os.tmpdir(), 'uploads', uniqueName);
+  fs.writeFileSync(filePath, Buffer.from(json.buffer, 'utf-8'));
+  
+  // Upload to MinIO
+  const result = await this.minioClient.putObject('uploads', filename, fs.createReadStream(filePath));
+  const publicDownloadUrl = await this.minioClient.presignedUrl('GET', 'uploads', filename, 12 * 60 * 60);
+  
+  // Async fire-and-forget
+  this.fileAnalyzerService.CheckForErrors({ pathToGcs: publicDownloadUrl }).subscribe({...});
+  this.statsService.SaveNew(dataForStats).subscribe({...});
+  
+  return JSON.stringify({ filenameInTemporaryDirectory: filePath, fileInStorage: filename, publicDownloadUrl, eTag });
+}
+----
+
+**Current Gaps**::
+- Fire-and-forget error handling could lose failed operations
+- No retry or backoff for downstream gRPC calls
+- Temp files not cleaned up on analyzer/stats failures
+- Correlation ID not propagated through gRPC calls
+
+**North Star Goals**::
+- Integrate with message broker (RabbitMQ, Kafka) for reliable async delivery
+- Dead-letter queues for failed analysis or metrics operations
+- Distributed tracing: correlation IDs in all gRPC headers
+- Move temporary staging to shared storage or direct S3 multipart
+
+---
+
+=== File Analyzer
+[horizontal]
+**Tech Stack**:: NestJS + TypeScript (dual process: gRPC + WebSocket)
+**Ports**:: 5051 (gRPC), 3422 (WebSocket)
+**Transport**:: gRPC (inbound RPC) + WebSocket (outbound events)
+
+**Responsibilities**::
+- Validates file format (e.g., JSON schema validation)
+- Broadcasts validation results to connected frontend clients
+- Serves as WebSocket gateway for real-time notifications
+
+**Key Flows**::
+1. **gRPC Method** `FileAnalyzer.CheckForErrors(pathToGcs)`:
+   - Fetches file from presigned URL
+   - Parses and validates JSON
+   - Returns success/failure string
+   - **Current Gap**: Does not send results back to frontend
+
+2. **WebSocket Gateway** on port 3422:
+   - Frontend connects via socket.io at `http://localhost:3422`
+   - Supports `hello` event from client
+   - Broadcasts `events` to all connected clients
+   - **Current Gap**: No integration with analysis results
+
+**Current Implementation**::
+[source, typescript]
+----
+// gRPC Handler
+@GrpcMethod('FileAnalyzer', 'CheckForErrors')
+async checkForErrors(data: { pathToGcs: string }): Promise<string> {
+  const fetchedFile = await fetch(data.pathToGcs);
+  const fileContent = await fetchedFile.text();
+  try {
+    JSON.parse(fileContent);
+    return 'File is clean';
+  } catch (error) {
+    return 'File has errors';
+  }
+}
+
+// WebSocket Gateway (separate process)
+@WebSocketGateway({ cors: { origin: '*', credentials: true } })
+export class AppGateway implements OnGatewayConnection, OnGatewayDisconnect {
+  @WebSocketServer() server: Server;
+  
+  @SubscribeMessage('hello')
+  handleHello(@MessageBody() data: { message, userId, knownAs }) {
+    this.server.emit('events', { message: `Hello, ${data.knownAs}!`, userId });
+  }
+}
+----
+
+**Current Gaps**::
+- gRPC CheckForErrors result is not broadcast to frontend
+- Two separate process bootstraps (gRPC + WebSocket) but no shared state
+- Frontend receives generic `events` but cannot correlate with specific file uploads
+- No error propagation back to user
+
+**North Star Goals**::
+1. Merge or link gRPC result handler to WebSocket event emitter
+2. Implement per-upload event topic (e.g., `analysis-results:${correlationId}`)
+3. Add structured event schema (e.g., `{ uploadId, status, errors, metadata }`)
+4. Introduce request tracing context to gRPC handlers
+
+---
+
+=== Internal Statistics
+[horizontal]
+**Tech Stack**:: NestJS + OpenTelemetry + TypeScript
+**Port**:: 8081 (gRPC metrics endpoint)
+**Transport**:: gRPC (unary calls)
+
+**Responsibilities**::
+- Collects operation metrics from other services
+- Records performance histograms (e.g., process time in ms)
+- Exposes Prometheus-compatible metrics endpoint
+- Integrates with Prometheus scraper
+
+**Key Flows**::
+1. **gRPC Method** `StatisticsService.SaveNew(name, milliseconds, type, dateAt)`:
+   - Increments custom counter (tags: type)
+   - Records histogram (process time)
+   - Returns `{ collectedAt }`
+
+2. **Metrics**:
+   - Counter: `custom_counter` (tagged by operation type)
+   - Histogram: `app_process_time` (buckets: 500ms, 750ms, 1000ms, 1500ms)
+
+3. **Prometheus Scraper**:
+   - Reads `/metrics` endpoint on `127.0.0.1:8081`
+   - Configured in `devenv.nix` to scrape job `internal-statistics`
+
+**Current Implementation**::
+[source, typescript]
+----
+@GrpcMethod('StatisticsService', 'SaveNew')
+saveNewStatistic(
+  data: { name, milliseconds, type, dateAt },
+  metadata: grpcJs.Metadata,
+  call: grpcJs.ServerUnaryCall<any, any>,
+): { collectedAt: string } {
+  this.customMetricCounter.add(1, { type: data.type });
+  this.performanceGauge.record(data.milliseconds, { type: data.type });
+  return { collectedAt: new Date().toISOString() };
+}
+----
+
+**Current Gaps**::
+- No automatic distributed tracing (W3C Trace Context not propagated)
+- Metrics are not tied to specific uploads or user sessions
+- No cardinality guards (high-cardinality labels could blow up Prometheus)
+
+**North Star Goals**::
+1. Full OpenTelemetry Trace SDK integration (traces, not just metrics)
+2. Structured logging with correlation IDs
+3. Metrics cardinality management and sampling
+
+---
+
+=== User Tracker
+[horizontal]
+**Tech Stack**:: NestJS + TypeScript
+**Port**:: 7071 (TCP)
+**Transport**:: TCP MessagePattern (inbound)
+
+**Responsibilities**::
+- Tracks user session information
+- Currently stores minimal state in memory (or logs)
+- Returns user history on request
+
+**Key Flows**::
+1. **TCP Method** `MessagePattern { cmd: 'storeUser' }`:
+   - Receives: `{ userId }`
+   - Stores or logs user session
+   - Returns: `'OK'`
+
+**Current Implementation**::
+[source, typescript]
+----
+@MessagePattern({ cmd: 'storeUser' })
+storeUser(jsonString: string) {
+  const receivedPayload = JSON.parse(jsonString) as { userId };
+  this.logger.log(`Received payload: ${JSON.stringify(receivedPayload, null, 2)}`);
+  return 'OK';
+}
+----
+
+**Current Gaps**::
+- No actual storage backend (in-memory only, lost on restart)
+- No user identity enrichment or history tracking
+- No correlation with uploads or session timelines
+- No query interface (read-only, one-way message)
+
+**North Star Goals**::
+1. Add persistent storage (PostgreSQL, MongoDB, or Redis)
+2. Implement session model: `{ userId, displayName, createdAt, lastSeenAt }`
+3. Add gRPC query service: `GetUserProfile(userId) -> UserProfile`
+4. Track user activity timeline (uploads, conversions, deletions)
+
+---
+
+=== File Converter
+[horizontal]
+**Tech Stack**:: NestJS + TypeScript
+**Port**:: (not yet integrated)
+**Transport**:: (planned: gRPC or message broker)
+
+**Responsibilities**::
+- Transform or convert file format (e.g., JSON → CSV, PDF, etc.)
+- Perform as part of post-analysis pipeline
+- Store converted outputs to MinIO
+
+**Current Status**::
+- Service skeleton exists but is not wired into the upload/analysis flow
+- No endpoints or message patterns implemented
+
+**North Star Role**::
+- Pluggable converter stages after File Analyzer validation
+- Multiple simultaneous conversions (e.g., JSON → CSV AND JSON → PDF)
+- Output versioning and caching in MinIO
+
+---
+
+=== Infrastructure Services
+
+==== MinIO (S3-Compatible Object Storage)
+[horizontal]
+**Endpoint**:: `127.0.0.1:9000`
+**Credentials**:: minioadmin / minioadmin (dev only, hardcoded)
+**Bucket**:: `uploads`
+**Usage**:: Stores uploaded files with presigned URLs for downloads
+
+**Current**::
+- Single bucket `uploads` for all files
+- Presigned URLs valid for 12 hours
+- No lifecycle policies or archival
+
+**North Star**::
+- Separate buckets by user or tenant
+- Lifecycle policies (e.g., delete after 30 days)
+- Versioning enabled for audit
+- IAM and S3 bucket policies
+
+---
+
+==== Prometheus
+[horizontal]
+**Config**:: `devenv.nix` auto-configures scraper
+**Scrape Target**:: `127.0.0.1:8081` (Internal Statistics)
+**Interval**:: Default (15s)
+
+**Current**::
+- Scrapes only Internal Statistics service
+- No custom dashboards or alerts
+
+**North Star**::
+- Scrape all services that expose `/metrics`
+- Multi-service aggregation (API Gateway, File Uploader, etc.)
+- Alert rules for SLOs and anomalies
+
+---
+
+==== Grafana
+[horizontal]
+**Port**:: 3000
+**Data Source**:: Prometheus
+**Usage**:: Real-time dashboards and alerting
+
+**Current**::
+- Placeholder (minimal configuration)
+
+**North Star**::
+- Upload/conversion throughput dashboard
+- Per-user metrics (upload count, total size, success rate)
+- Service health and latency percentiles
+- Alert notifications (Slack, email, etc.)
+
+---
+
+== Current State Analysis
+
+=== Working Flows
+1. **File Upload End-to-End**:
+   - Frontend → Client API (HTTP) → File Uploader (TCP) → MinIO (S3)
+   - File Uploader → File Analyzer (gRPC, async fire-and-forget)
+   - File Uploader → Internal Statistics (gRPC, async fire-and-forget)
+
+2. **User Session Tracking**:
+   - Frontend generates ephemeral UUID + display name (LocalStorage)
+   - Client API passes `X-Ephemeral-Id` to File Uploader
+   - User Tracker logs session events (no storage yet)
+
+3. **WebSocket Connection**:
+   - Frontend connects to File Analyzer WebSocket gateway on 3422
+   - Broadcasts generic `events` to all connected clients
+
+=== Critical Gaps
+
+[cols="1,3,2"]
+|===
+|Gap|Description|Impact
+
+|No Event Feedback from Analysis
+|File Analyzer validates JSON but does not broadcast results to the frontend. User uploads file but gets no confirmation of analysis status.
+|Poor UX; user doesn't know if file passed validation.
+
+|Fire-and-Forget Error Handling
+|File Uploader calls File Analyzer and Statistics without subscribing to errors or retries. Failed operations disappear silently.
+|Data loss; no observability of failed operations.
+
+|No Persistent User Storage
+|User Tracker has no backend storage. Session data is lost on restart. No user history or repeat tracking.
+|Cannot build user workflows or audit trails.
+
+|Correlation ID Isolation
+|Correlation ID is created per upload but not propagated through gRPC calls. Tracing across services is impossible.
+|Debugging and observability are fragmented.
+
+|File Converter Not Integrated
+|Converter service exists but is disconnected. No post-analysis transformation pipeline.
+|Missing feature; converter code is dead code.
+
+|Hardcoded Credentials & Ports
+|MinIO, gRPC, TCP addresses are all hardcoded. Environment-based config missing.
+|Not deployable to different environments without code changes.
+
+|No Distributed Tracing
+|OpenTelemetry is installed but not integrated end-to-end. No trace propagation across service boundaries.
+|Cannot trace requests from frontend to backend microservices.
+
+|Temp File Leaks
+|Temporary files written to `os.tmpdir()` are not cleaned up on analysis/stats failures.
+|Disk space bloat over time.
+|===
+
+== North Star Architecture
+
+The North Star represents a more resilient, event-driven, and observable system. Below is the target state:
+
+=== Design Principles
+
+1. **Event-Driven Async**::
+   - Replace request/response blocking calls with pub/sub messaging (e.g., RabbitMQ, Kafka)
+   - Dead-letter queues for failed operations
+   - Idempotent processing to enable retries
+
+2. **Correlation & Tracing**::
+   - W3C Trace Context propagated across all service boundaries
+   - Structured logging with correlation IDs
+   - Full OpenTelemetry Trace SDK integration
+
+3. **Clear Service Boundaries**::
+   - Each service owns a bounded context (DDD)
+   - Explicit contracts via gRPC proto or message schemas
+   - No shared databases (eventual consistency via events)
+
+4. **Resilience**::
+   - Circuit breakers and retry logic
+   - Timeout guards and bulkhead isolation
+   - Health checks and graceful degradation
+
+5. **Observability**::
+   - Metrics (Prometheus), Logs (ELK/Loki), Traces (Jaeger)
+   - Custom dashboards for key workflows
+   - Alert thresholds for SLO violations
+
+=== Target Service Topology
+
+[plantuml, north-star-topology, svg]
+----
+@startuml
+!theme plain
+skinparam backgroundColor #ffffff
+
+title North Star Service Topology (Event-Driven)
+
+box User_Layer as user_layer #lightblue
+  actor Browser
+  participant "Frontend UI\n(React)" as frontend
+end box
+
+box API_Layer as api_layer #lightgreen 
+  participant "API Gateway\n(NestJS)" as api_gateway
+end box
+
+box Service_Layer as service_layer #lightyellow 
+  participant "File Uploader\n(Ingestion)" as uploader
+  participant "File Analyzer\n(Validation)" as analyzer
+  participant "File Converter\n(Transform)" as converter
+  participant "User Service\n(Profile)" as user_service
+  participant "Notification\n(Events)" as notifier
+end box
+
+box Infrastructure_Layer as infra_layer #lightcyan
+  participant "Message Broker\n(RabbitMQ/Kafka)" as broker
+  participant "Object Storage\n(MinIO/S3)" as storage
+  participant "Cache\n(Redis)" as cache
+  participant "User DB\n(PostgreSQL)" as user_db
+end box
+
+box Observability_Layer as obs_layer #lightgray
+  participant "Metrics\n(Prometheus)" as prometheus
+  participant "Logs\n(Loki/ELK)" as logs
+  participant "Traces\n(Jaeger)" as traces
+  participant "Dashboards\n(Grafana)" as grafana
+end box
+
+Browser --> frontend : User interaction
+frontend --> api_gateway : HTTP /upload\n[file, userId]
+api_gateway --> uploader : Publish UploadRequested event
+uploader --> storage : Store file
+uploader --> broker : Publish FileUploaded event
+
+broker --> analyzer : Consume FileUploaded
+analyzer --> storage : Fetch file
+analyzer --> broker : Publish FileValidated event
+
+broker --> converter : Consume FileValidated\n(if enabled)
+converter --> storage : Store converted versions
+converter --> broker : Publish FileConverted event
+
+broker --> user_service : Consume UploadRequested\nPublish UserActivityLogged event
+user_service --> user_db : Persist session
+
+broker --> notifier : Consume FileValidated, FileConverted
+notifier --> frontend : WebSocket: AnalysisComplete\nW3C Trace Context in header
+
+uploader --> prometheus : Record metrics\n(w/ correlation ID)
+analyzer --> traces : Record spans\n(OpenTelemetry)
+user_service --> logs : Structured logs\n(JSON w/ correlation ID)
+
+prometheus --> grafana : Query
+traces --> grafana : Query
+logs --> grafana : Query
+
+note right of broker
+  Pub/Sub ensures no fire-and-forget.
+  Dead-letter queues for error handling.
+  All events include trace context.
+end note
+
+@enduml
+----
+
+=== Migration Roadmap
+
+[cols="1,2,2,1"]
+|===
+|Phase|Goals|Effort|Timeline
+
+|Phase 1: Resilience
+a|
+- Add circuit breakers & retry logic to TCP/gRPC clients
+- Implement timeout guards
+- Add structured logging with correlation IDs
+|Medium
+|Week 1–2
+
+|Phase 2: Correlation & Tracing
+a|
+- Integrate W3C Trace Context into all service-to-service calls
+- Wire up OpenTelemetry Traces (not just metrics)
+- Add distributed tracing dashboards in Grafana
+|Medium
+|Week 2–3
+
+|Phase 3: Event-Driven Async
+a|
+- Deploy RabbitMQ or Kafka
+- Refactor fire-and-forget calls to pub/sub
+- Implement dead-letter queues
+- Add idempotency keys to services
+|High
+|Week 3–5
+
+|Phase 4: Data Persistence
+a|
+- Add PostgreSQL for User Service
+- Implement session schema and query API
+- Enable MinIO versioning and lifecycle policies
+|Medium
+|Week 4–6
+
+|Phase 5: File Converter Integration
+a|
+- Wire File Converter into analysis pipeline
+- Add conversion format selection in frontend
+- Test multi-format conversions
+|Low–Medium
+|Week 5–7
+
+|Phase 6: Observability
+a|
+- Deploy ELK stack or Loki
+- Standardize logging format across services
+- Build SLO dashboards
+- Configure alert rules
+|Medium
+|Week 6–8
+|===
+
+== Configuration & Environment Variables
+
+=== Development Environment (devenv.nix)
+
+The project uses `devenv` with `process-compose` for local orchestration:
+
+[source, nix]
+----
+services.minio = { enable = true; buckets = [ "uploads" ]; };
+services.prometheus = { enable = true; scrapeConfigs = [...]; };
+services.redis = { enable = true; };
+
+processes = {
+  a-file-uploader.exec = "cd file-uploader && npm install && npm run start:dev";
+  a-client-api.exec = "cd client-api && npm install && npm run start:dev";
+  a-internal-statistics.exec = "cd internal-statistics && npm install && npm run start:dev";
+  a-file-analyzer.exec = "cd file-analyzer && npm install && npm run start:dev";
+  a-user-tracker.exec = "cd user-tracker && npm install && npm run start:dev";
+  frontend-ui.exec = "cd frontend-ui && npm install && npm run dev";
+  grafana.exec = "./start-grafana.sh";
+};
+----
+
+=== Recommended Environment Variables
+
+Create a `.env.local` file in the project root for overrides:
+
+[source, bash]
+----
+# Client API
+CLIENT_API_PORT=8080
+
+# File Uploader
+FILE_UPLOADER_PORT=7001
+MINIO_ENDPOINT=127.0.0.1
+MINIO_PORT=9000
+MINIO_ACCESS_KEY=minioadmin
+MINIO_SECRET_KEY=minioadmin
+MINIO_BUCKET=uploads
+
+# File Analyzer
+FILE_ANALYZER_GRPC_PORT=5051
+FILE_ANALYZER_WS_PORT=3422
+
+# Internal Statistics
+INTERNAL_STATISTICS_GRPC_PORT=8081
+
+# User Tracker
+USER_TRACKER_PORT=7071
+
+# Frontend
+VITE_API_URL=http://localhost:8080
+VITE_WS_URL=http://localhost:3422
+
+# Observability
+PROMETHEUS_PORT=9090
+GRAFANA_PORT=3000
+LOG_LEVEL=info
+
+# Tracing (OpenTelemetry)
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
+OTEL_TRACES_EXPORTER=otlp
+----
+
+== Deployment Considerations
+
+=== Docker Compose
+
+Each service should be containerized with multi-stage builds to minimize image size:
+
+[source, dockerfile]
+----
+# Dockerfile for each service
+FROM node:24-alpine AS builder
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci --only=production && npm run build
+
+FROM node:24-alpine
+WORKDIR /app
+COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/package.json ./package.json
+EXPOSE 7001
+CMD ["node", "dist/main.js"]
+----
+
+=== Kubernetes
+
+For production, consider Kubernetes with:
+- StatefulSets for PostgreSQL and Redis
+- Deployments for stateless services
+- ConfigMaps for environment variables
+- Secrets for credentials
+- NetworkPolicies for service-to-service communication
+- Ingress for external traffic
+
+=== Database Schema (User Service)
+
+[source, sql]
+----
+CREATE TABLE users (
+  id SERIAL PRIMARY KEY,
+  user_uuid UUID UNIQUE NOT NULL,
+  display_name VARCHAR(255) NOT NULL,
+  created_at TIMESTAMP DEFAULT NOW(),
+  last_seen_at TIMESTAMP,
+  metadata JSONB
+);
+
+CREATE TABLE user_sessions (
+  id SERIAL PRIMARY KEY,
+  user_id INT NOT NULL REFERENCES users(id),
+  session_token VARCHAR(255) UNIQUE NOT NULL,
+  created_at TIMESTAMP DEFAULT NOW(),
+  expired_at TIMESTAMP
+);
+
+CREATE TABLE upload_events (
+  id SERIAL PRIMARY KEY,
+  user_id INT NOT NULL REFERENCES users(id),
+  file_name VARCHAR(255),
+  correlation_id UUID,
+  status VARCHAR(50), -- pending, completed, failed
+  created_at TIMESTAMP DEFAULT NOW()
+);
+----
+
+== Summary & Next Steps
+
+=== What's Working
+- Microservice communication patterns (TCP, gRPC, WebSocket)
+- File ingestion and S3 storage
+- Basic telemetry collection
+- Frontend-to-backend coordination
+
+=== What Needs Improvement
+- Event-driven async pipelines (currently fire-and-forget)
+- Persistent user and session tracking
+- Distributed tracing and correlation
+- Error handling and resilience
+- File Converter integration
+- Observability dashboards
+
+=== Immediate Actions
+1. **Add structured logging** with correlation IDs in all services
+2. **Integrate W3C Trace Context** into gRPC and TCP client calls
+3. **Deploy RabbitMQ** or Kafka for event streaming
+4. **Implement circuit breakers** in Client API for TCP clients
+5. **Add PostgreSQL** for User Service persistence
+6. **Create Grafana dashboards** for upload pipeline metrics
+
+=== Long-Term Vision
+A fully observable, resilient, event-driven microservices platform that scales horizontally, supports multiple file processing workflows, integrates with cloud storage, and provides a seamless user experience with real-time feedback and comprehensive audit trails.
+
+---
+
+*Document Version: 1.0 | Last Updated: 2026-04-19*

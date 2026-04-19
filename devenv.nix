@@ -3,6 +3,7 @@
 {
   packages = [ pkgs.git pkgs.nodejs_24 pkgs.grafana ];
   languages.typescript.enable = true;
+  languages.php.enable = true; # Do not judge me...
 
   services.minio = {
     enable = true;
@@ -23,13 +24,18 @@
     ];
   };
 
+  services.redis = {
+    enable = true;
+  };
+
   process.manager.implementation = "process-compose";
   processes = {
-    ms_file-uploader.exec = "cd file-uploader && npm install && npm run start:dev";
-    ms_client-api.exec = "cd client-api && npm install && npm run start:dev";
-    ui_frontend-ui.exec = "cd frontend-ui && npm install && npm run dev";
-    ms_internal-statistics.exec = "cd internal-statistics && npm install && npm run start:dev";
-    ms_file-analyzer.exec = "cd file-analyzer && npm install && npm run start:dev";
-    ze_grafana.exec = "./start-grafana.sh";
+    a-file-uploader.exec = "cd file-uploader && npm install && npm run start:dev";
+    a-client-api.exec = "cd client-api && npm install && npm run start:dev";
+    a-internal-statistics.exec = "cd internal-statistics && npm install && npm run start:dev";
+    a-file-analyzer.exec = "cd file-analyzer && npm install && npm run start:dev";
+    a-user-tracker.exec = "cd user-tracker && npm install && npm run start:dev";
+    frontend-ui.exec = "cd frontend-ui && npm install && npm run dev";
+    grafana.exec = "./start-grafana.sh";
   };
 }

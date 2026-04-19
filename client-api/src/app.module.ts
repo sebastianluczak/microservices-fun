@@ -12,6 +12,13 @@ import { ClientsModule, Transport } from '@nestjs/microservices';
           port: 7001,
         },
       },
+      {
+        name: 'USER_TRACKER',
+        transport: Transport.TCP,
+        options: {
+          port: 7071,
+        },
+      },
     ]),
   ],
   controllers: [AppController],

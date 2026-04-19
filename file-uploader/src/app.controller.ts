@@ -81,7 +81,12 @@ export class AppController implements OnModuleInit {
       filename: string;
       size: number;
       buffer: string;
+      corelationId: string;
+      ephemeralId: string;
     };
+    this.logger.log(
+      `[${json.corelationId}] (@${json.ephemeralId}) - upload started`,
+    );
 
     const data = Buffer.from(json.buffer, 'utf-8');
     this.logger.log('Received file upload request');

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import './App.css'
-import { io } from 'socket.io-client'
+import { useWsConnection } from './context/WsConnectionContext';
+import { useUser } from './context/UserContext';
 
 type UploadStatus = {
   filenameInTemporaryDirectory: string;
@@ -12,25 +13,19 @@ type UploadStatus = {
 function App() {
   const [fileToUpload, setFileToUpload] = useState<File | null>(null);
   const [uploadStatus, setUploadStatus] = useState<UploadStatus>('');
+  const { socket: wsConnection } = useWsConnection();
+  const { user, resetSession } = useUser();
 
-  const socket = io('http://localhost:3422');
-
-  socket.on('connect', () => {
-    console.log('Socket.IO connection established');
-    socket.emit('events', 'Hello from the frontend!');
+  wsConnection.on('events', (data) => {
+    console.log('Received from server:', data);
   });
 
-  socket.on('disconnect', () => {
-    console.log('Socket.IO connection closed');
-  });
-
-  socket.on('events', (data: string) => {
-    console.log('Received message from server:', data);
+  wsConnection.on('connect', () => {
+    console.log('Connected to WebSocket server');
   });
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     if (event.target.files && event.target.files.length > 0) {
-      console.log(`Selected file: ${event.target.files[0]}`);
       setFileToUpload(event.target.files[0]);
     }
   };
@@ -48,6 +43,9 @@ function App() {
       const response = await fetch('http://localhost:8080/upload', {
         method: 'POST',
         body: formData,
+        headers: {
+          "X-Ephemeral-Id": user?.uuid || 'unknown'
+        }
       });
 
       if (response.ok) {
@@ -65,6 +63,13 @@ function App() {
 
   return (
     <section id="center">
+      <p>
+        {user 
+          ? `Hello, ${user.displayName}!`
+          : 'Loading user information...'
+        }
+        <button onClick={resetSession} style={{ marginLeft: '1rem' }}>Reset Session</button>
+      </p>
       <div>
         <p>{typeof uploadStatus === 'string' ? uploadStatus : (
           <button onClick={() => window.open(uploadStatus.publicDownloadUrl, '_blank')}>Download {uploadStatus.fileInStorage}</button>
